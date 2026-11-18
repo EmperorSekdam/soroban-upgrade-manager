@@ -3,7 +3,7 @@
 This file is the single source of truth for all changes made to this repository
 as part of the Stellar Wave Program resubmission audit. Entries are appended in
 chronological order. Do not edit or remove prior entries.
- 
+
 ---
 
 ## 2026-09-20 — docs/readme-and-walkthrough (PR #1)
@@ -603,3 +603,13 @@ New fixtures can now be uploaded in the test host via `upload_contract_wasm` (ve
 **Why:** The cited test did not prove the auth behavior because it uses `mock_all_auths`, so it cannot demonstrate that `upgrade()` rejects non-manager callers. The auth-rejection claim is instead backed by `test_real_example_target_upgrade_rejects_non_manager`, which runs without `mock_all_auths`.
 
 **Test results:** `cargo fmt --all` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` → 69 passed, 0 failed; `bash scripts/check_claims.sh` → OK.
+
+## 2026-11-18 — test/execute-at-exact-executable-at
+
+### Changes
+
+**contracts/upgrade-manager/src/test.rs** — Added `test_execute_at_exactly_executable_at_succeeds`. It initializes the manager with `voting_period=100, timelock_delay=100`, proposes an upgrade targeting `MockTarget`, casts quorum (3) yes votes, advances past voting, finalizes, reads `executable_at` from `get_proposal`, sets the ledger sequence to exactly `executable_at` (asserted, not one beyond), and asserts `execute` succeeds with status `Executed`.
+
+**Why:** `assert_timelock_passed` in `timelock.rs` rejects only when `sequence < executable_at`, so execution must be allowed at the `executable_at` ledger itself. The suite covered `executable_at - 1` (`test_execute_one_ledger_before_executable_at_fails`) and ledgers well past the boundary, but not the exact boundary ledger, so an off-by-one change to `<=` would have gone undetected. No non-test files were changed. Closes #51.
+
+**Test results:** `cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` → 70 passed, 0 failed (includes `test_execute_at_exactly_executable_at_succeeds`); `bash scripts/check_claims.sh` → OK.

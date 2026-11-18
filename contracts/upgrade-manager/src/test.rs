@@ -875,6 +875,57 @@ mod tests {
         assert_eq!(client.try_execute(&id), Err(Ok(Error::TimelockNotExpired)));
     }
 
+    /// Execute at exactly executable_at must succeed (`sequence < executable_at` is the
+    /// only rejecting condition, so the boundary ledger itself is permitted).
+    #[test]
+    fn test_execute_at_exactly_executable_at_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let manager_id = env.register(UpgradeManager, ());
+        let manager = UpgradeManagerClient::new(&env, &manager_id);
+        let target_id = env.register(MockTarget, ());
+        let new_hash = env
+            .deployer()
+            .upload_contract_wasm(soroban_sdk::Bytes::new(&env));
+        let admin = Address::generate(&env);
+        // voting_period=100, timelock_delay=100, quorum=3, threshold=51
+        manager.initialize(&admin, &100u32, &100u32, &3u32, &51u32);
+
+        let pid = manager.propose_upgrade(&admin, &target_id, &new_hash, &desc(&env, "v2"));
+        for _ in 0..3 {
+            manager.vote(&Address::generate(&env), &pid, &true);
+        }
+
+        const BUMP: u32 = 50_000;
+        let extend_ttls = || {
+            env.as_contract(&manager_id, || {
+                env.storage().instance().extend_ttl(BUMP, BUMP);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&DataKey::Proposal(pid), BUMP, BUMP);
+            });
+            env.as_contract(&target_id, || {
+                env.storage().instance().extend_ttl(BUMP, BUMP);
+            });
+        };
+
+        extend_ttls();
+        env.ledger().with_mut(|l| l.sequence_number += 101); // past voting_ends_at
+        assert_eq!(manager.finalize(&pid), ProposalStatus::Queued);
+
+        let executable_at = manager.get_proposal(&pid).executable_at;
+        assert_eq!(executable_at, env.ledger().sequence() + 100);
+
+        extend_ttls();
+        // Advance the ledger to exactly proposal.executable_at — not one beyond.
+        env.ledger().with_mut(|l| l.sequence_number = executable_at);
+        assert_eq!(env.ledger().sequence(), executable_at);
+
+        manager.execute(&pid);
+        assert_eq!(manager.get_proposal(&pid).status, ProposalStatus::Executed);
+    }
+
     // -----------------------------------------------------------------------
     // time_until_executable
     // -----------------------------------------------------------------------
